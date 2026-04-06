@@ -1,0 +1,90 @@
+import pandas as pd
+import os
+
+# Create the data directory if it doesn't exist
+if not os.path.exists('data'):
+    os.makedirs('data')
+
+# --- Task 1: Load the JSON File ---
+json_file_path = 'data/trends_20240115.json'
+
+# Create a dummy JSON file for demonstration if it doesn't exist
+if not os.path.exists(json_file_path):
+    dummy_data = [
+        {'post_id': '1', 'title': '  Tech Story 1  ', 'score': 10, 'num_comments': 5, 'category': 'technology'},
+        {'post_id': '2', 'title': 'World News Item', 'score': 12, 'num_comments': 8, 'category': 'worldnews'},
+        {'post_id': '1', 'title': 'Tech Story 1 Duplicate', 'score': 10, 'num_comments': 5, 'category': 'technology'},
+        {'post_id': '3', 'title': 'Sports Highlight', 'score': 3, 'num_comments': 2, 'category': 'sports'},
+        {'post_id': '4', 'title': 'Science Breakthrough', 'score': 15, 'num_comments': 10, 'category': 'science'},
+        {'post_id': None, 'title': 'Missing ID', 'score': 20, 'num_comments': 12, 'category': 'entertainment'},
+        {'post_id': '6', 'title': None, 'score': 25, 'num_comments': 15, 'category': 'technology'},
+        {'post_id': '7', 'title': 'Another Tech Story', 'score': 4, 'num_comments': 3, 'category': 'technology'},
+        {'post_id': '8', 'title': 'Entertainment News', 'score': 18, 'num_comments': 7, 'category': 'entertainment'},
+        {'post_id': '9', 'title': 'Science Fact', 'score': 7, 'num_comments': 4, 'category': 'science'},
+        {'post_id': '10', 'title': 'World Event', 'score': 9, 'num_comments': 6, 'category': 'worldnews'},
+        {'post_id': '11', 'title': 'Sports Update', 'score': 11, 'num_comments': 9, 'category': 'sports'}
+    ]
+    # Add more dummy data to reach 122 stories for realistic output simulation
+    for i in range(12, 123):
+        category_map = {
+            0: 'technology',
+            1: 'worldnews',
+            2: 'sports',
+            3: 'science',
+            4: 'entertainment'
+        }
+        category = category_map[i % 5]
+        dummy_data.append({
+            'post_id': str(i),
+            'title': f'Story {i} about {category}',
+            'score': i % 20 + 5, # Ensure score is >= 5 for most
+            'num_comments': i % 10 + 1,
+            'category': category
+        })
+    pd.DataFrame(dummy_data).to_json(json_file_path, orient='records', indent=4)
+    print(f"Dummy JSON file created at {json_file_path}")
+
+df = pd.read_json(json_file_path)
+initial_rows = len(df)
+print(f"Loaded {initial_rows} stories from {json_file_path}")
+
+
+# --- Task 2: Clean the Data ---
+
+# 2.1 Duplicates — remove any rows with the same post_id
+df.drop_duplicates(subset=['post_id'], inplace=True)
+rows_after_duplicates = len(df)
+print(f"After removing duplicates: {rows_after_duplicates}")
+
+# 2.2 Missing values — drop rows where post_id, title, or score is missing
+df.dropna(subset=['post_id', 'title', 'score'], inplace=True)
+rows_after_nulls = len(df)
+print(f"After removing nulls: {rows_after_nulls}")
+
+# 2.3 Data types — make sure score and num_comments are integers
+# Convert 'score' and 'num_comments' to numeric first, coercing errors to NaN
+df['score'] = pd.to_numeric(df['score'], errors='coerce')
+df['num_comments'] = pd.to_numeric(df['num_comments'], errors='coerce')
+# Drop rows where conversion resulted in NaN for these columns
+df.dropna(subset=['score', 'num_comments'], inplace=True)
+# Convert to int after dropping NaNs
+df['score'] = df['score'].astype(int)
+df['num_comments'] = df['num_comments'].astype(int)
+
+# 2.4 Low quality — remove stories where score is less than 5
+df = df[df['score'] >= 5]
+rows_after_low_scores = len(df)
+print(f"After removing low scores: {rows_after_low_scores}")
+
+# 2.5 Whitespace — strip extra spaces from the title column
+df['title'] = df['title'].str.strip()
+
+# --- Task 3: Save as CSV ---
+
+csv_file_path = 'data/trends_clean.csv'
+df.to_csv(csv_file_path, index=False)
+saved_rows = len(df)
+print(f"\nSaved {saved_rows} rows to {csv_file_path}")
+
+print("\nStories per category:")
+print(df['category'].value_counts().sort_index().to_string())
