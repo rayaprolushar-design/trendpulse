@@ -1,0 +1,220 @@
+import requests
+import json
+import os
+import time
+from datetime import datetime
+
+# Define API endpoints
+TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
+ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{}.json"
+
+# Define categories and their keywords (case-insensitive)
+categories_keywords = {
+    "technology": ["AI", "software", "tech", "code", "computer", "data", "cloud", "API", "GPU", "LLM"],
+    "worldnews": ["war", "government", "country", "president", "election", "climate", "attack", "global"],
+    "sports": ["NFL", "NBA", "FIFA", "sport", "game", "team", "player", "league", "championship"],
+    "science": ["research", "study", "space", "physics", "biology", "discovery", "NASA", "genome"],
+    "entertainment": ["movie", "film", "music", "Netflix", "game", "book", "show", "award", "streaming"]
+}
+
+# Define request headers
+headers = {"User-Agent": "TrendPulse/1.0"}
+
+# Maximum number of stories to collect per category
+MAX_STORIES_PER_CATEGORY = 25
+
+def fetch_and_categorize_stories():
+    """Fetches stories from HackerNews, categorizes them, and returns a list of dictionaries."""
+    all_collected_stories = []
+    collected_counts = {category: 0 for category in categories_keywords}
+
+    print("Fetching top story IDs...")
+    try:
+        # Step 1: Get the list of top story IDs
+        response = requests.get(TOP_STORIES_URL, headers=headers, timeout=10)
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        top_story_ids = response.json()
+        # Fetch the first 500 IDs as specified in the prompt
+        top_story_ids = top_story_ids[:500]
+        print(f"Fetched {len(top_story_ids)} top story IDs.")
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching top story IDs: {e}")
+        return []
+
+    # Convert IDs to set for faster lookup if needed, but we iterate through them
+    # Iterate through categories to ensure a balanced collection
+    story_ids_to_process = list(top_story_ids)
+
+    # Iterate through each story ID to fetch details and categorize
+    for story_id in story_ids_to_process:
+        if len(all_collected_stories) >= len(categories_keywords) * MAX_STORIES_PER_CATEGORY:
+            print("Reached maximum total stories, stopping collection.")
+            break
+
+        # Check if we already collected enough stories for all categories
+        # Or if all categories have reached their max count
+        if all(count >= MAX_STORIES_PER_CATEGORY for count in collected_counts.values()):
+            print("All categories have reached their maximum story count.")
+            break
+
+        # Introduce a 2-second delay between processing each category
+        # The prompt says 'Wait 2 seconds between each category', which implies per category loop iteration.
+        # Given the current iteration over all stories, this is approximated by a delay after each 25 stories for any category
+        # For strict adherence, a different looping structure might be needed (e.g., trying to fill one category then the next).
+        # For now, I'll add a sleep after a block of stories are processed for a category, or per 'attempt' to fill a category.
+        # This implementation will prioritize iterating through all story_ids once.
+        
+        try:
+            story_response = requests.get(ITEM_URL.format(story_id), headers=headers, timeout=5)
+            story_response.raise_for_status()
+            story_data = story_response.json()
+
+            # Skip if title is missing or if it's not a story
+            if not story_data or story_data.get('type') != 'story' or not story_data.get('title'):
+                continue
+
+            title = story_data['title']
+            assigned_category = "other"
+
+            # Assign category based on keywords
+            for category, keywords in categories_keywords.items():
+                if collected_counts[category] < MAX_STORIES_PER_CATEGORY:
+                    if any(keyword.lower() in title.lower() for keyword in keywords):
+                        assigned_category = category
+                        break
+            
+            # Only collect if a specific category was assigned AND it's not full yet
+            if assigned_category != "other" and collected_counts[assigned_category] < MAX_STORIES_PER_CATEGORY:
+                collected_stories.append({
+                    "post_id": str(story_data.get('id')),
+                    "title": story_data.get('title'),
+                    "category": assigned_category,
+                    "score": story_data.get('score', 0),
+                    "num_comments": story_data.get('descendants', 0),
+                    "author": story_data.get('by', 'unknown'),
+                    "collected_at": datetime.now().isoformat()
+                })
+                collected_counts[assigned_category] += 1
+                # If a category is just filled, print and potentially sleep
+                if collected_counts[assigned_category] == MAX_STORIES_PER_CATEGORY:
+                    print(f"Category '{assigned_category}' reached {MAX_STORIES_PER_CATEGORY} stories. Waiting 2 seconds.")
+                    time.sleep(2) # Wait 2 seconds between each category being filled
+            
+
+        except requests.exceptions.RequestException as e:
+            # print(f"Error fetching story {story_id}: {e}") # Too verbose
+            continue
+        except Exception as e:
+            # print(f"Unexpected error processing story {story_id}: {e}") # Too verbose
+            continue
+
+    # Re-iterate to refine collection based on MAX_STORIES_PER_CATEGORY
+    # The previous loop might have collected more than 25 for a category if keywords overlap heavily or story processing is fast.
+    # A more robust approach ensures exactly 25 per category.
+    final_collected_stories = []
+    temp_collected_by_category = {cat: [] for cat in categories_keywords}
+
+    for story in collected_stories:
+        cat = story['category']
+        if cat in temp_collected_by_category and len(temp_collected_by_category[cat]) < MAX_STORIES_PER_CATEGORY:
+            temp_collected_by_category[cat].append(story)
+
+    for cat_list in temp_collected_by_category.values():
+        final_collected_stories.extend(cat_list)
+
+    return final_collected_stories
+
+
+if __name__ == "__main__":
+    output_dir = "data"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        print(f"Created directory: {output_dir}")
+
+    collected_stories = []
+    
+    # Modified fetching logic to ensure 25 per category and proper sleeping
+    print("Fetching top story IDs...")
+    try:
+        response = requests.get(TOP_STORIES_URL, headers=headers, timeout=10)
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        top_story_ids = response.json()
+        story_ids_pool = top_story_ids[:500] # Use only the first 500 IDs
+        print(f"Fetched {len(story_ids_pool)} top story IDs from HackerNews.")
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching top story IDs: {e}")
+        story_ids_pool = []
+
+    # Dictionary to hold stories per category, ensuring we don't exceed MAX_STORIES_PER_CATEGORY
+    categorized_stories = {cat: [] for cat in categories_keywords}
+    
+    # Keep track of processed story IDs to avoid redundant API calls
+    processed_story_ids = set()
+    
+    # Loop through each category to try and fill it up to MAX_STORIES_PER_CATEGORY
+    for category_name, keywords in categories_keywords.items():
+        print(f"\nAttempting to collect stories for category: '{category_name}'")
+        stories_found_for_category = 0
+        
+        # Iterate through the available story IDs pool
+        for story_id in story_ids_pool:
+            if stories_found_for_category >= MAX_STORIES_PER_CATEGORY:
+                break # Move to the next category once limit is reached
+            if story_id in processed_story_ids:
+                continue # Skip if already processed for another category
+
+            try:
+                story_response = requests.get(ITEM_URL.format(story_id), headers=headers, timeout=5)
+                story_response.raise_for_status()
+                story_data = story_response.json()
+
+                if not story_data or story_data.get('type') != 'story' or not story_data.get('title'):
+                    continue
+
+                title = story_data['title']
+                
+                # Check if this story fits the current category's keywords
+                if any(keyword.lower() in title.lower() for keyword in keywords):
+                    categorized_stories[category_name].append({
+                        "post_id": str(story_data.get('id')),
+                        "title": story_data.get('title'),
+                        "category": category_name,
+                        "score": story_data.get('score', 0),
+                        "num_comments": story_data.get('descendants', 0),
+                        "author": story_data.get('by', 'unknown'),
+                        "collected_at": datetime.now().isoformat()
+                    })
+                    stories_found_for_category += 1
+                    processed_story_ids.add(story_id) # Mark as processed
+
+            except requests.exceptions.RequestException as e:
+                # print(f"Error fetching story {story_id}: {e}") # Can be verbose
+                pass # Silently skip stories that fail to fetch
+            except Exception as e:
+                # print(f"Unexpected error processing story {story_id}: {e}") # Can be verbose
+                pass
+        
+        if stories_found_for_category < MAX_STORIES_PER_CATEGORY:
+            print(f"Warning: Could only find {stories_found_for_category} stories for category '{category_name}'.")
+        
+        # Wait 2 seconds between each category collection attempt, as per prompt
+        if category_name != list(categories_keywords.keys())[-1]: # Don't sleep after the last category
+            print("Waiting 2 seconds before fetching the next category...")
+            time.sleep(2)
+
+
+    # Combine all collected stories from different categories
+    for cat_list in categorized_stories.values():
+        collected_stories.extend(cat_list)
+
+    # Generate filename with today's date
+    today_date = datetime.now().strftime("%Y%m%d")
+    output_filename = os.path.join(output_dir, f"trends_{today_date}.json")
+
+    # Save to JSON file
+    try:
+        with open(output_filename, 'w', encoding='utf-8') as f:
+            json.dump(collected_stories, f, ensure_ascii=False, indent=4)
+        print(f"\nCollected {len(collected_stories)} stories. Saved to {output_filename}")
+    except IOError as e:
+        print(f"Error saving data to {output_filename}: {e}")
